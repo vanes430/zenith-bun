@@ -1,11 +1,11 @@
-// lib/color.ts
+// src/lib/color.ts
 import chalk from "chalk";
 import type { ChalkInstance } from "chalk";
 
-// Export chalk langsung
+// Export chalk langsung jika perlu
 export { chalk };
 
-// Definisikan tipe agar semua function wajib ada
+// Definisikan tipe agar semua function wajib ada di sini
 type ColorFunctions = {
   reset: ChalkInstance;
   bold: ChalkInstance;

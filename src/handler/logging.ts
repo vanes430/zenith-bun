@@ -1,4 +1,4 @@
-// lib/logging.ts
+// src/handler/logging.ts
 import { color } from "../lib/color";
 
 export const log = {
@@ -6,7 +6,7 @@ export const log = {
     const size = text?.length ?? 0;
     console.log(
       color.green(
-        `[MSG] ${name} size: ${size} => ${text}`
+        `[MSG] ${name} size: ${size} \n => ${text}`
       )
     );
   },

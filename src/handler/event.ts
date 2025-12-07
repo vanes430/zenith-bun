@@ -1,5 +1,5 @@
-// lib/event.ts
-import type { WASocket } from "whaileys";
+// src/handler/event.ts
+import type { WASocket, WAMessage } from "whaileys";
 import { log } from "./logging";
 import { color } from "../lib/color";
 
@@ -9,61 +9,61 @@ export function registerEvents(sock: WASocket) {
     if (!msg || !msg.message) return;
 
     const jid = msg.key.remoteJid!;
-    const sender = msg.pushName ?? null;
+    const sender = msg.pushName ?? "-";
 
-    // Ambil isi pesan
+    // ambil text
     const text =
       msg.message?.conversation ||
       msg.message?.extendedTextMessage?.text ||
       msg.message?.extendedTextMessage?.matchedText ||
       "";
 
-    // ----------------------------------------------------
-    // 📘 FORMAT MESSAGE LABEL
-    // ----------------------------------------------------
+    // ----- LOG LABEL -----
     let label = `${color.cyan(sender)} ${color.white(`(${jid})`)}`;
 
-    // ----------------------------------------------------
-    // 📘 Jika dari grup
-    // ----------------------------------------------------
     if (jid.endsWith("@g.us")) {
-      let groupName: string | null = null;
-
       try {
         const meta = await sock.groupMetadata(jid);
-        groupName = meta.subject ?? null;
-      } catch {
-        groupName = null;
-      }
+        const groupName = meta?.subject ?? "Unknown Group";
+        const participant = msg.key.participant ?? "";
 
-      const participant = msg.key.participant ?? jid;
-
-      label =
-        `${color.cyan(sender)} ` +
-        `${color.white(`(${participant})`)} ` +
-        `${color.magenta("@")} ` +
-        `${color.yellow(groupName)} ` +
-        `${color.white(`(${jid})`)}`;
+        label =
+          `${color.cyan(sender)} ${color.white(`(${participant})`)}` +
+          `\n ${color.magenta("@")} ${color.yellow(groupName)} ${color.white(`(${jid})`)}`;
+      } catch {}
     }
 
-    // ----------------------------------------------------
-    // 🟢 LOG PESAN (dengan color)
-    // ----------------------------------------------------
     log.msg(label, text);
 
-    // ----------------------------------------------------
-    // 🔵 AUTO READ (tanpa logging)
-    // ----------------------------------------------------
+    // -----------------------------------------------------------
+    // 🔵 LOGIC READ SESUAI JID
+    // -----------------------------------------------------------
+
     try {
-      await sock.readMessages([
-        {
-          remoteJid: jid,
-          id: msg.key.id!,
-          participant: msg.key.participant ?? undefined,
-        },
-      ]);
-    } catch {}
+      if (jid.endsWith("@g.us")) {
+        // 🔹 GROUP — gunakan chatModify
+        const lastMsgInChat: WAMessage = msg;
+
+        await sock.chatModify(
+          {
+            markRead: true,
+            lastMessages: [lastMsgInChat],
+          },
+          jid
+        );
+      } else {
+        // 🔹 PRIVATE — gunakan readMessages
+        await sock.readMessages([
+          {
+            remoteJid: jid,
+            id: msg.key.id!,
+          },
+        ]);
+      }
+    } catch (err) {
+      console.log("READ LOGIC ERROR:", err);
+    }
   });
 
-  log.event("Event handler loaded.");
+  log.event("Event handler ready.");
 }

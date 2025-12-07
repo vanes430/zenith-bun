@@ -1,9 +1,12 @@
-// index.ts
+// src/index.ts
 import { createWhatsAppConnection } from "./lib/auth";
 import type { WASocket } from "whaileys";
 import { color } from "./lib/color";
-import { handleCommand } from "./lib/case";
 import { registerEvents } from "./handler/event";
+
+// handler yang bisa di-reload
+let handleCommand = (await import("./lib/case")).handleCommand;
+let sock: WASocket | null = null;
 
 // ==================================================
 // 🎨 ASCII BANNER BERWARNA
@@ -46,29 +49,35 @@ async function startBot() {
     console.log(color.yellow("\n--- START BOT ---"));
     console.log(color.yellow("Menyiapkan koneksi WhatsApp...\n"));
 
-    const sock: WASocket = await createWhatsAppConnection(startBot);
+    // Buat koneksi bot
+    sock = await createWhatsAppConnection(startBot);
 
-    // Register auto events from event.ts
+    // Pastikan tidak ada listener rangkap
+    sock.ev.removeAllListeners("messages.upsert");
+    sock.ev.removeAllListeners("connection.update");
+
+    // Event bawaan dari event.ts
     registerEvents(sock);
 
-    // Connection event
+    // Event update koneksi
     sock.ev.on("connection.update", (update) => {
         if (update.connection === "open") {
-            displayFancyConnectionInfo(sock);
+            displayFancyConnectionInfo(sock!);
         }
 
         if (update.connection === "close") {
-            console.log(color.red("\n⚠️ Koneksi terputus. Mencoba menyambung ulang...\n"));
+            console.log(
+                color.red("\n⚠️ Koneksi terputus. Mencoba menyambung ulang...\n")
+            );
         }
     });
 
-    // Command handler
-    sock.ev.on("messages.upsert", async (m) => {
-        const msg = m.messages[0];
+    // Event command handler
+    sock.ev.on("messages.upsert", async ({ messages }) => {
+        const msg = messages[0];
         if (!msg || msg.key.fromMe) return;
 
-        // Jalankan handler command (multi-prefix, paralel)
-        await handleCommand(sock, msg);
+        await handleCommand(sock!, msg);
     });
 }
 
@@ -76,3 +85,8 @@ async function startBot() {
 // ▶️ RUN BOT
 // ==================================================
 startBot();
+// Graceful shutdown handler
+process.on("SIGINT", () => {
+    console.log(color.yellow("\n--- BOT DIHENTIKAN ---"));
+    process.exit(0);
+});
