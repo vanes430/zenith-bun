@@ -1,5 +1,5 @@
 // src/func/sendContact.ts
-import type { WASocket } from "whaileys";
+import type { WASocket } from "baileys";
 
 export async function sendContact(
     sock: WASocket,
@@ -20,6 +20,6 @@ export async function sendContact(
         }
     };
 
-    // TypeScript Whaileys biasanya belum mendefinisikan type contacts → perlu cast any
+    // TypeScript Baileys biasanya belum mendefinisikan type contacts → perlu cast any
     return await sock.sendMessage(jid, message as any);
 }

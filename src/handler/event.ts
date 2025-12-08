@@ -1,7 +1,9 @@
 // src/handler/event.ts
-import type { WASocket, WAMessage } from "whaileys";
+import type { WASocket, WAMessage } from "baileys";
 import { log } from "./logging";
 import { color } from "../lib/color";
+import { config } from "../config";
+import { getActualJid } from "../lib/owner";
 
 export function registerEvents(sock: WASocket) {
   sock.ev.on("messages.upsert", async ({ messages }) => {
@@ -9,6 +11,7 @@ export function registerEvents(sock: WASocket) {
     if (!msg || !msg.message) return;
 
     const jid = msg.key.remoteJid!;
+    const actualJid = getActualJid(msg);  // ✅ Get actual JID (not LID)
     const sender = msg.pushName ?? "-";
 
     // ambil text
@@ -19,49 +22,53 @@ export function registerEvents(sock: WASocket) {
       "";
 
     // ----- LOG LABEL -----
-    let label = `${color.cyan(sender)} ${color.white(`(${jid})`)}`;
+    let label = `${color.cyan(sender)} ${color.white(`(${actualJid})`)}`; // ✅ Use actualJid
 
     if (jid.endsWith("@g.us")) {
       try {
         const meta = await sock.groupMetadata(jid);
         const groupName = meta?.subject ?? "Unknown Group";
         const participant = msg.key.participant ?? "";
+        const actualParticipant = (msg.key as any)?.remoteJidAlt || participant; // ✅ Get actual participant
 
         label =
-          `${color.cyan(sender)} ${color.white(`(${participant})`)}` +
+          `${color.cyan(sender)} ${color.white(`(${actualParticipant})`)}` +
           `\n ${color.magenta("@")} ${color.yellow(groupName)} ${color.white(`(${jid})`)}`;
-      } catch {}
+      } catch { }
     }
 
-    log.msg(label, text);
+    if (config.autoLog) {
+      log.msg(label, text);
+    }
 
     // -----------------------------------------------------------
-    // 🔵 LOGIC READ SESUAI JID
+    // 🔵 MARK READ LOGIC (ChatModification)
     // -----------------------------------------------------------
 
-    try {
-      if (jid.endsWith("@g.us")) {
-        // 🔹 GROUP — gunakan chatModify
-        const lastMsgInChat: WAMessage = msg;
-
-        await sock.chatModify(
-          {
-            markRead: true,
-            lastMessages: [lastMsgInChat],
-          },
-          jid
-        );
-      } else {
-        // 🔹 PRIVATE — gunakan readMessages
-        await sock.readMessages([
-          {
-            remoteJid: jid,
-            id: msg.key.id!,
-          },
-        ]);
+    if (config.readReceipts === "all") {
+      try {
+        if (jid.endsWith("@g.us")) {
+          // 🔹 GROUP — gunakan chatModify dengan markRead
+          // Type: ChatModification = { markRead: boolean; lastMessages: LastMessageList }
+          await sock.chatModify(
+            {
+              markRead: true,
+              lastMessages: [msg],
+            },
+            jid
+          );
+        } else {
+          // 🔹 PRIVATE — gunakan readMessages
+          await sock.readMessages([
+            {
+              remoteJid: jid,
+              id: msg.key.id!,
+            },
+          ]);
+        }
+      } catch (err) {
+        log.error(err instanceof Error ? err : `READ LOGIC ERROR: ${err}`);
       }
-    } catch (err) {
-      console.log("READ LOGIC ERROR:", err);
     }
   });
 

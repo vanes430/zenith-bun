@@ -1,5 +1,5 @@
 // src/func/sendButton.ts
-import type { WASocket } from "whaileys";
+import type { WASocket } from "baileys";
 import fs from "fs";
 import path from "path";
 

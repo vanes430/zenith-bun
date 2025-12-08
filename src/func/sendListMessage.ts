@@ -1,5 +1,5 @@
 // src/func/sendListMessage.ts
-import type { WASocket } from "whaileys";
+import type { WASocket } from "baileys";
 
 export async function sendListMessage(
     sock: WASocket,
@@ -38,6 +38,6 @@ export async function sendListMessage(
         sections
     };
 
-    // ⛔ WAJIB memakai cast ANY karena typings Whaileys tidak mengenali listMessage
+    // ⛔ WAJIB memakai cast ANY karena typings Baileys tidak mengenali listMessage
     return await sock.sendMessage(jid, listMessage as any);
 }

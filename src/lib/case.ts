@@ -1,15 +1,29 @@
 // src/lib/case.ts
-import type { WASocket, proto } from "whaileys";
-import { color } from "./color";
+// ====================================
+// 🚀 PARALLEL COMMAND HANDLER
+// ====================================
+// This handler processes commands in parallel to prevent freezing.
+// All commands are executed non-blocking using Promise.resolve().then()
+// to ensure multiple users can execute commands simultaneously.
+// ====================================
+
+import type { WASocket, proto } from "baileys";
 import { sendButton } from "../func/sendButton";
 import { sendListMessage } from "../func/sendListMessage";
 import { sendContact } from "../func/sendContact";
+import { config } from "../config";
+import { log } from "../handler/logging";
+import { executePlugin, getLoadedPlugins } from "../handler/plugin";
+import { isOwner } from "./owner";
+import { executeShellCommand, executeJavaScript } from "./eval";
 
-// Multi prefix support: ".", "!"
-const prefixes = [".", "!"];
-const OWNER = "6281276274398@s.whatsapp.net";
-
+/**
+ * Handle incoming commands with parallel execution
+ * All commands run non-blocking to prevent freeze
+ */
 export async function handleCommand(sock: WASocket, msg: proto.IWebMessageInfo) {
+    if (!msg.key) return;
+
     const sender = msg.key.participant || msg.key.remoteJid;
     const jid = msg.key.remoteJid;
     if (!jid) return;
@@ -19,92 +33,191 @@ export async function handleCommand(sock: WASocket, msg: proto.IWebMessageInfo) 
         msg.message?.extendedTextMessage?.text ||
         "";
 
+    // ====================================
+    // 🔒 EVAL FEATURES (OWNER ONLY)
+    // ====================================
+
+    const isOwnerUser = isOwner(msg);
+
+    // $ = Shell Command Execution (non-blocking)
+    if (text.startsWith("$") && isOwnerUser) {
+        const command = text.slice(1).trim();
+        if (!command) {
+            Promise.resolve().then(() =>
+                sock.sendMessage(jid, { text: "❌ Usage: $ <command>" })
+            );
+            return;
+        }
+        // Execute in parallel (non-blocking)
+        Promise.resolve().then(() => executeShellCommand(sock, msg, command));
+        return;
+    }
+
+    // => = JavaScript Eval (non-blocking)
+    if (text.startsWith("=>") && isOwnerUser) {
+        const code = text.slice(2).trim();
+        if (!code) {
+            Promise.resolve().then(() =>
+                sock.sendMessage(jid, { text: "❌ Usage: => <javascript code>" })
+            );
+            return;
+        }
+        // Execute in parallel (non-blocking)
+        Promise.resolve().then(() => executeJavaScript(sock, msg, code));
+        return;
+    }
+
+    // ====================================
+    // NORMAL COMMAND PROCESSING
+    // ====================================
+
     // Cek prefix valid
-    const prefixUsed = prefixes.find((p) => text.startsWith(p));
+    const prefixUsed = config.prefix.find((p: string) => text.startsWith(p));
     if (!prefixUsed) return;
 
     const args = text.slice(prefixUsed.length).trim().split(/ +/);
     const command = args.shift()?.toLowerCase() || "";
 
-    console.log(color.green(`[CMD] ${prefixUsed}${command} dari ${jid}`));
+    log.cmd(prefixUsed, command, jid);
 
     // ====================================
-    // EXECUTE COMMAND PARALEL (NON BLOCKING)
+    // TRY PLUGIN FIRST (HOT-RELOADABLE)
+    // ====================================
+    const pluginHandled = await executePlugin(command, sock, msg, args);
+    if (pluginHandled) {
+        return; // Plugin handled the command
+    }
+
+    // ====================================
+    // FALLBACK TO BUILT-IN COMMANDS
     // ====================================
     Promise.resolve().then(async () => {
         try {
-            const onlyOwner = () => sender !== OWNER && sock.sendMessage(jid, { text: "❌ Kamu bukan owner." });
-switch (command) {
+            // Owner check helper
+            const onlyOwner = () => !isOwnerUser && sock.sendMessage(jid, { text: "❌ Kamu bukan owner." });
 
-case "ping": {
-    if (onlyOwner()) break;
-    const start = Date.now();
+            switch (command) {
 
-    const sentMsg = await sock.sendMessage(jid, { text: "Testing ping..." });
+                // Built-in test commands (prefixed with 'test' to avoid conflicts)
+                case "testlist": {
+                    await sendListMessage(sock, jid);
+                }
+                    break;
 
-    const end = Date.now();
-    const ping = end - start;
+                case "testcontact": {
+                    await sendContact(sock, jid);
+                }
+                    break;
 
-    await sock.sendMessage(jid, {
-        text: `Pong! 🟢\n*Latency:* ${ping} ms`
-    });
-}
-break;
+                case "testbutton": {
+                    await sendButton(sock, jid, "Ini adalah pesan dengan button:", [
+                        { id: "btn1", text: "Tombol 1" },
+                        { id: "btn2", text: "Tombol 2" }
+                    ]);
+                }
+                    break;
 
-case "testlistmessage": {
-    await sendListMessage(sock, jid);
-}
-break;
+                // Debug command - dump message structure (owner only)
+                case "dump": {
+                    if (onlyOwner()) break;
 
-case "testsendcontact": {
-    await sendContact(sock, jid);
-}
-break;
+                    // Full dump dengan processed data
+                    const actualJid = (msg.key as any)?.remoteJidAlt || sender;
+                    const dump = {
+                        // Raw message
+                        raw: msg,
 
-case "testbutton": {
-    await sendButton(sock, jid, "Ini adalah pesan dengan test1:", [
-        { id: "btn1", text: "Tombol 1" },
-        { id: "btn2", text: "Tombol 2" }
-    ]);
-}
-break;
+                        // Processed data
+                        processed: {
+                            jid: jid,
+                            actualJid: actualJid,
+                            sender: sender,
+                            senderNumber: actualJid?.split("@")[0],
+                            pushName: msg.pushName,
+                            isGroup: jid.endsWith("@g.us"),
+                            isOwner: isOwnerUser,
+                            timestamp: msg.messageTimestamp,
+                        }
+                    };
 
-case "info": {
-    await sock.sendMessage(jid, { 
-        text: "Ini adalah bot WhatsApp berbasis Whaileys ⚡"
-    });
-}
-break;
+                    await sock.sendMessage(jid, {
+                        text: JSON.stringify(dump, null, 2)
+                    });
+                }
+                    break;
 
-case "menu": {
-    await sock.sendMessage(jid, {
-        text: `📜 *MENU*\n\n!ping\n!info\n!menu\n.ping\n.info\n.menu`
-    });
-}
-break;
+                // Menu command - shows all available commands
+                case "menu":
+                case "help": {
+                    const plugins = getLoadedPlugins();
 
-case "restart": {
-    if (onlyOwner()) break;
-    await sock.sendMessage(jid, { text: "♻️ Restarting bot..." });
-    process.exit(5); // restart
-}
-break;
+                    // Group plugins by category
+                    const publicPlugins = plugins.filter(p => p.enabled && !p.ownerOnly && !p.groupOnly);
+                    const ownerPlugins = plugins.filter(p => p.enabled && p.ownerOnly);
+                    const groupPlugins = plugins.filter(p => p.enabled && p.groupOnly && !p.ownerOnly);
 
-case "stop": {
-    if (onlyOwner()) break;
-    await sock.sendMessage(jid, { text: "🛑 Bot dimatikan." });
-    process.exit(10); // stop
-}
-break;
+                    let menuText = `📜 *${config.botName.toUpperCase()} - MENU*\n\n`;
 
+                    // Public plugins
+                    if (publicPlugins.length > 0) {
+                        menuText += `🌐 *Public Commands:*\n`;
+                        publicPlugins.forEach(p => {
+                            menuText += `• ${p.commands?.join(", ")} - ${p.description || p.name}\n`;
+                        });
+                        menuText += `\n`;
+                    }
 
-default: {
-    console.log(color.brightYellow(`[CMD] Perintah tidak dikenal: ${command}`));
-}
-break;
-}
+                    // Owner only plugins
+                    if (ownerPlugins.length > 0) {
+                        menuText += `👑 *Owner Only:*\n`;
+                        ownerPlugins.forEach(p => {
+                            menuText += `• ${p.commands?.join(", ")} - ${p.description || p.name}\n`;
+                        });
+                        menuText += `\n`;
+                    }
+
+                    // Group only plugins
+                    if (groupPlugins.length > 0) {
+                        menuText += `👥 *Group Only:*\n`;
+                        groupPlugins.forEach(p => {
+                            menuText += `• ${p.commands?.join(", ")} - ${p.description || p.name}\n`;
+                        });
+                        menuText += `\n`;
+                    }
+
+                    // Built-in commands
+                    menuText += `🛠️ *Built-in Commands:*\n`;
+                    menuText += `• menu, help - Show this menu\n`;
+                    menuText += `• testlist - Test list message\n`;
+                    menuText += `• testcontact - Test send contact\n`;
+                    menuText += `• testbutton - Test button message\n`;
+                    menuText += `• stop - Stop bot (owner only)\n\n`;
+
+                    menuText += `📊 *Stats:*\n`;
+                    menuText += `• Total plugins: ${plugins.length}\n`;
+                    menuText += `• Prefix: ${config.prefix.join(", ")}\n`;
+
+                    await sock.sendMessage(jid, { text: menuText.trim() });
+                }
+                    break;
+
+                // Stop command (owner only)
+                case "stop": {
+                    if (onlyOwner()) break;
+                    await sock.sendMessage(jid, { text: "🛑 Bot dimatikan." });
+                    process.exit(0);
+                }
+                    break;
+
+                // Unknown command
+                default: {
+                    // Don't log unknown commands (might be typo or plugin that failed to load)
+                    // User will just not get a response
+                }
+                    break;
+            }
         } catch (err) {
-            console.error(color.red(`Error Command: ${err}`));
+            log.error(err instanceof Error ? err : `Error Command: ${err}`);
             await sock.sendMessage(jid, {
                 text: "⚠️ Terjadi kesalahan menjalankan perintah."
             });
